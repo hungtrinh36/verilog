@@ -1,0 +1,263 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Arrive Technologies
+//
+// Filename     : rtlmpc8321admux.v
+// Description  : .
+//
+// Author       : simuser@LINUXSRV24
+// Created On   : Tue Mar 08 16:24:02 2011
+// History (Date, Changed By)
+//
+////////////////////////////////////////////////////////////////////////////////
+
+module rtlmpc8321cpu32
+    (
+     // MPC8321 ,Address Data MUX. LSB mode
+     mpcclk,
+     mpcrst_,
+     
+     mpcadr,//25-16
+     //mpcmux,//15-0
+     
+     mpcale,
+     mpcbctr,
+     mpcoe_,
+     mpccs_,
+     mpcta_,
+     mpcint1_,
+     mpcint2_,
+     mpcoen,
+     mpcdi,
+     mpcdo,
+     
+     // asyncpu - IF.
+     oeupce_,
+     oeupa,
+     oeupdi,
+     ieupdo,
+     oeuprnw,
+     ieupack,
+     ieupint1,
+     ieupint2
+     );
+
+////////////////////////////////////////////////////////////////////////////////
+// Parameter declarations
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Port declarations
+
+// MPC In.
+input           mpcclk;
+input           mpcrst_;
+
+
+// Address Data MUX.
+input [9:0]     mpcadr;
+//inout [15:0]    mpcmux;
+output          mpcoen;
+input [15:0]    mpcdi;
+output [15:0]   mpcdo;
+
+// MPC Ctrl.
+input           mpcale;
+input           mpcbctr;
+input           mpcoe_;
+input           mpccs_;
+output          mpcta_;
+output          mpcint1_;
+output          mpcint2_;
+
+// asyncpu - IF.
+output          oeupce_;
+output [23:0]   oeupa;
+output [31:0]   oeupdi;
+input [31:0]    ieupdo;
+output          oeuprnw;
+input           ieupack;
+input           ieupint1;
+input           ieupint2;
+
+////////////////////////////////////////////////////////////////////////////////
+//Write Cycle
+/*
+       ____________________           __________________                 ____________
+MPCCS_                     |_________|                  |_______________|
+       ____________________  ________  _________________  ______________
+                           \/        \/                 \/              \
+MPCMUX ___{A[23:0],2'b00}__/\D[31:16]_/\_{A[23:0],2'b10}_/\_D[15:0]_____/
+  
+                                  __
+ GenACK     _____________________|  |__________________
+ 
+                                                                     __
+ CoreACL    ________________________________________________________|  |____________
+
+            _____________________    _______________________________    ____________
+ MPCTA                           |__|                               |__|
+ 
+       ______________________________ __________________                 ____________
+EUPCE_                                                  |_______________|
+
+                                                       _  ______________
+                                                        \/              \
+EUPA[23:0]                                             _/\_A[23:0]______/
+                                                       _  ______________
+                                                        \/              \
+EUPDI[31:0]                                            _/\_D[31:0]______/
+
+ */
+
+//Read Cycle
+/*
+       ____________________           __________________                 ____________
+MPCCS_                     |_________|                  |_______________|
+       ____________________  ________  _________________  ______________
+                           \/        \/                 \/              \
+MPCMUX ___{A[23:0],2'b00}__/\D[31:16]/\_{A[23:0],2'b10}_/\_D[15:0]______/
+  
+                                  __
+CoreACK     _____________________|  |__________________
+ 
+                                                                     __
+ GENACK     ________________________________________________________|  |____________
+
+            _____________________    _______________________________    ____________
+ MPCTA                           |__|                               |__|
+ 
+            ______________           ______________________________________________
+EUPCE_                    |_________|
+
+                           ______________
+                         \/              \
+EUPA[23:0]               /\_A[23:0]______/
+                        _  ______________
+                         \/              \
+EUPDO[31:0]             _/\_D[31:0]______/
+
+ */
+
+////////////////////////////////////////////////////////////////////////////////
+// Output declarations
+
+wire [9:0]      mpca = mpcadr; //10 bit
+wire [15:0]     mpcdo;
+wire [15:0]     mpcdi;
+wire            mpcoen;
+
+
+//BPAD    #(16) PADMUX  (.PAD(mpcmux),  .EN(mpcoen), .I(mpcdo), .O(mpcdi));
+
+////////////////////////////////////////////////////////////////////////////////
+// Local logic and instantiation
+
+wire [15:0]     mpcdi_sw = {mpcdi [0],mpcdi [1],mpcdi [2],mpcdi [3],
+                            mpcdi [4],mpcdi [5],mpcdi [6],mpcdi [7],
+                            mpcdi [8],mpcdi [9],mpcdi [10],mpcdi [11],
+                            mpcdi [12],mpcdi [13],mpcdi [14],mpcdi [15]};
+
+wire [15:0]     eupdo = eupdo16;
+wire [15:0]     eupdo_sw = {eupdo [0],eupdo [1],eupdo [2],eupdo [3],
+                            eupdo [4],eupdo [5],eupdo [6],eupdo [7],
+                            eupdo [8],eupdo [9],eupdo [10],eupdo [11],
+                            eupdo [12],eupdo [13],eupdo [14],eupdo [15]};
+
+wire [9:0]      mpca_sw = {mpca [0],mpca [1],mpca [2],mpca [3],
+                           mpca [4],mpca [5],mpca [6],mpca [7],
+                           mpca [8],mpca [9]};
+
+wire [15:0]     eupad_l;
+fflopxe #(16) ffxeeupad_l
+    (mpcclk, mpcrst_, mpcale, mpcdi_sw, eupad_l);
+
+////////////////////////////////////////////////////////////////////////////////
+wire            eupclk  = mpcclk ;
+wire            euprst_ = mpcrst_ ;
+wire [25:0]     eupa   = {eupad_l,mpca_sw[9:0]}; //addr indicate 1B
+
+wire            euprnw;
+wire            eupce_;
+wire [15:0]     eupdi16;
+fflopx #(18) ffxeupdata
+    (mpcclk, mpcrst_, {!mpcoe_,mpccs_,mpcdi_sw}, {euprnw,eupce_,eupdi16});
+
+wire [15:0]     eupdo16;
+wire            eupack;
+
+////////////////////////////////////////////////////////////////////////////////
+//Write Prcoess
+assign          mpcdo  = eupdo_sw;
+assign          mpcoen = euprnw & (!eupce_);
+wire            mpcta_ = !eupack;
+wire            mpcint1_ = !ieupint1;
+wire            mpcint2_ = !ieupint2;
+
+////////////////////////////////////////////////////////////////////////////////
+wire    wrholdle = (~eupce_) & (~euprnw) & (eupa[1:0] == 2'b00);
+wire [15:0]     eupdi_l;
+fflopxe #(16) ffxeeupdi_l
+    (eupclk, euprst_, wrholdle, eupdi16, eupdi_l);
+
+wire    rdholdle = (~eupce_) & euprnw & (eupa[1:0] == 2'b00);
+wire [15:0]     eupdo_l;
+fflopxe #(16) ffxeeupdo_l
+    (eupclk, euprst_, rdholdle, ieupdo[15:0], eupdo_l);
+
+wire    rdholdpen = (~eupce_) & euprnw & (eupa[1:0] == 2'b10);
+wire [15:0] rdholdpdo = rdholdpen ? eupdo_l : 16'b0;
+
+wire    pseudoack;
+assign  pseudoack = wrholdle | rdholdpen;
+
+////////////////////////////////////////////////////////////////////////////////
+//Out to Core
+wire            oeuprnw = euprnw ;
+wire            oeupce_ = ~((~eupce_) & (!wrholdle) & (!rdholdpen));
+wire [23:0]     oeupa   = eupa[25:2];
+wire [31:0]     oeupdi = {eupdi_l,eupdi16};
+
+////////////////////////////////////////////////////////////////////////////////
+assign          eupdo16  = rdholdpen ? eupdo_l : ieupdo[31:16];
+
+wire            upack;
+assign          upack = ieupack | pseudoack;
+
+wire [2:0]      upack_shift;   
+fflopx #(3) iupack_shift (eupclk,euprst_,{upack_shift[1:0],upack},upack_shift[2:0]);
+
+wire            uprdy; 
+assign          uprdy = (upack_shift[2:1] == 2'b01);
+
+wire            uprdy1;
+fflopx #(1) flxuprdy1 (eupclk,euprst_,uprdy,uprdy1);
+////////////////////////////////////////////////////////////////////////////////
+/*
+ALTIOBUF_OPAD_EN        OPAD_EN_TA
+    (
+     .datain            (impcta_),
+     .oe                (~mpccs_),
+     .dataout           (mpcta_)
+     );
+
+ALTBPAD                 ALTBPAD_DATA[15:0]
+    (
+     .datain            (mpcdo),
+     .oe                ({16{~(mpcoe_ | mpccs_)}}),
+     .dataio            (mpcdio),
+     .dataout           (mpcdi)
+     );
+*/
+////////////////////////////////////////////////////////////////////////////////    
+rdygen irdygen
+    (
+     .rst_      (euprst_),
+     .clk       (eupclk),
+     .pce_      (eupce_),
+     .scanmode  (1'b0),
+     .rdyin     (uprdy1),
+     .rdyout    (eupack)
+     );
+
+endmodule
