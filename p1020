@@ -1,0 +1,264 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Arrive Technologies
+//
+// Filename     : rtlp1020cpu_4af5.v
+// Description  : .
+//
+// Author       : cuongbht@HW-BHTCUONG
+// Author Slogan: try not to become a man of success,
+//              : but rather, try to become a man of value
+// Created On   : Tue May 14 09:22:15 2013
+// History (Date, Changed By)
+//
+////////////////////////////////////////////////////////////////////////////////
+
+module rtlp1020cpu
+    (
+     //p1020 interface
+     mpcclk,
+     mpcrst_,
+     
+     mpcadr,
+     
+     mpcale,
+     mpcbctr,
+     mpcoe_,
+     mpcwe_,
+     mpccs_,
+     mpcta_,
+     mpcint1_,
+     mpcint2_,
+     mpcoen,
+     mpcdio,
+     
+     //cpu core interface
+     oeupclk,
+     oeupce_,
+     oeupa,
+     oeupdi,
+     ieupdo,
+     oeuprnw,
+     ieupack,
+     ieupint1,
+     ieupint2
+     );
+
+////////////////////////////////////////////////////////////////////////////////
+// Parameter declarations
+
+////////////////////////////////////////////////////////////////////////////////
+// Port declarations
+//p1020 interface
+input           mpcclk;
+input           mpcrst_;
+
+input [15:0]    mpcadr;
+output          mpcoen;
+inout [15:0]    mpcdio;
+
+// MPC Ctrl.
+input           mpcale;
+input           mpcbctr;
+input           mpcoe_;
+input           mpcwe_;
+input           mpccs_;
+output          mpcta_;
+output          mpcint1_;
+output          mpcint2_;
+
+//cpu core interface
+output          oeupclk;
+output          oeupce_;
+output [23:0]   oeupa;
+output [31:0]   oeupdi;
+input [31:0]    ieupdo;
+output          oeuprnw;
+input           ieupack;
+input           ieupint1;
+input           ieupint2;
+
+////////////////////////////////////////////////////////////////////////////////
+// Output declarations
+
+////////////////////////////////////////////////////////////////////////////////
+// Local logic and instantiation
+assign          oeupclk = mpcclk;
+wire [15:0]     mpcdo;
+wire [15:0]     mpcdi;
+
+/*----------------------------------------------------------------------------*/
+reg [15:0]      eupad_h;
+always @(negedge mpcclk or negedge mpcrst_)
+    begin
+    if(!mpcrst_)    eupad_h <= 16'd0;
+    else if(mpcale) eupad_h <= mpcdi;
+    else            eupad_h <= eupad_h;
+    end
+
+/*----------------------------------------------------------------------------*/
+wire            impccs_p1,impccs_p2;
+fflopx #(2)     cr_impccs_p12(mpcclk,mpcrst_,{mpccs_,impccs_p1},{impccs_p1,impccs_p2});
+
+wire            neg_mpccs_,neg_mpccs_p1;
+fflopx #(1)     cr_neg_mpccs_p1(mpcclk,mpcrst_,neg_mpccs_,neg_mpccs_p1);
+
+wire            pos_mpccs_;
+
+assign          neg_mpccs_ = (~impccs_p1) &   impccs_p2 ;
+assign          pos_mpccs_ =   impccs_p1  & (~impccs_p2);
+
+wire [31:0]     nxt_eupad,eupad;
+fflopx #(32)    cr_eupad(mpcclk,mpcrst_,nxt_eupad,eupad);
+assign          nxt_eupad = neg_mpccs_ ? {eupad_h,mpcadr} : eupad;
+
+/*----------------------------------------------------------------------------*/
+wire            nxt_sw_eupack,sw_eupack;
+fflopx #(1)     cr_sw_eupack(mpcclk,mpcrst_,nxt_sw_eupack,sw_eupack);
+
+wire            nxt_eupce,eupce;
+fflopx #(1)     cr_eupce(mpcclk,mpcrst_,nxt_eupce,eupce);
+assign          nxt_eupce = neg_mpccs_p1    ? 1'b1 :
+                            pos_mpccs_      ? 1'b0 : eupce;
+
+wire            nxt_euprnw,euprnw;
+fflopx #(1)     cr_euprnw(mpcclk,mpcrst_,nxt_euprnw,euprnw);
+assign          nxt_euprnw = neg_mpccs_p1 ? (~mpcoe_) : euprnw;
+
+wire            rdp0,rdp0_p1,rdp0_p2,
+                rdp1,rdp1_p1,rdp1_p2,
+                wrp0,wrp0_p1,wrp0_p2,
+                wrp1,wrp1_p1,wrp1_p2;
+fflopx #(2)     cr_rdp0_p12(mpcclk,mpcrst_,{rdp0,rdp0_p1},{rdp0_p1,rdp0_p2});
+fflopx #(2)     cr_rdp1_p12(mpcclk,mpcrst_,{rdp1,rdp1_p1},{rdp1_p1,rdp1_p2});
+fflopx #(2)     cr_wrp0_p12(mpcclk,mpcrst_,{wrp0,wrp0_p1},{wrp0_p1,wrp0_p2});
+fflopx #(2)     cr_wrp1_p12(mpcclk,mpcrst_,{wrp1,wrp1_p1},{wrp1_p1,wrp1_p2});
+
+assign          rdp0    = eupce & (eupad[1:0]==2'b00) & euprnw;
+assign          rdp1    = eupce & (eupad[1:0]==2'b10) & euprnw;
+
+assign          wrp0    = eupce & (eupad[1:0]==2'b00) & (~euprnw);
+assign          wrp1    = eupce & (eupad[1:0]==2'b10) & (~euprnw);
+
+wire            ieupack,ieupack_p1,ieupack_p2,ieupack_p3;
+fflopx #(3)     cr_ieupack(mpcclk,mpcrst_,{ieupack,ieupack_p1,ieupack_p2},{ieupack_p1,ieupack_p2,ieupack_p3});
+
+wire            pos_ieupack,pos_ieupack_p1;
+fflopx #(1)     cr_pos_ieupack(mpcclk,mpcrst_,pos_ieupack,pos_ieupack_p1);
+
+assign          pos_ieupack = ieupack_p2 & (~ieupack_p3);
+
+wire [15:0]     nxt_ieupdo_l,ieupdo_l;
+fflopx #(16)    cr_ieupdo_l(mpcclk,mpcrst_,nxt_ieupdo_l,ieupdo_l);
+assign          nxt_ieupdo_l = (pos_ieupack & rdp0) ? ieupdo[15:0] : ieupdo_l;
+
+wire [15:0]     nxt_oeupdi_h,oeupdi_h;
+fflopx #(16)    cr_oeupdi_h(mpcclk,mpcrst_,nxt_oeupdi_h,oeupdi_h);
+assign          nxt_oeupdi_h = (wrp0 & sw_eupack) ? mpcdi : oeupdi_h;
+
+/*----------------------------------------------------------------------------*/
+/* interface with core */
+wire            pos_rdp0,pos_rdp0_p1,pos_rdp0_p2;
+wire            pos_wrp1,pos_wrp1_p1,pos_wrp1_p2;
+fflopx #(2)     cr_pos_rdp0(mpcclk,mpcrst_,{pos_rdp0,pos_rdp0_p1},{pos_rdp0_p1,pos_rdp0_p2});
+fflopx #(2)     cr_pos_wrp1(mpcclk,mpcrst_,{pos_wrp1,pos_wrp1_p1},{pos_wrp1_p1,pos_wrp1_p2});
+assign          pos_rdp0 = rdp0 & (~rdp0_p1);
+assign          pos_wrp1 = wrp1 & (~wrp1_p1);
+
+wire            nxt_oeupce_,oeupce_;
+fflopx #(1,1)   cr_oeupce_(mpcclk,mpcrst_,nxt_oeupce_,oeupce_);
+assign          nxt_oeupce_ = ~(rdp0_p1 | wrp1_p1) | pos_rdp0_p1 | pos_rdp0_p2 | pos_wrp1_p1 | pos_wrp1_p2;
+
+wire            nxt_oeuprnw,oeuprnw;
+fflopx #(1)     cr_oeuprnw(mpcclk,mpcrst_,nxt_oeuprnw,oeuprnw);
+assign          nxt_oeuprnw = euprnw;
+
+wire [23:0]     oeupa;
+assign          oeupa = eupad[25:2];
+
+wire [31:0]     nxt_oeupdi,oeupdi;
+fflopx #(32)    cr_oeupdi(mpcclk,mpcrst_,nxt_oeupdi,oeupdi);
+assign          nxt_oeupdi = pos_wrp1_p1 ? {oeupdi_h,mpcdi} : oeupdi;
+
+/*----------------------------------------------------------------------------*/
+/* interface MPC */
+wire            pos_rdp1,pos_rdp1_p1,pos_rdp1_p2;
+fflopx #(2)     cr_pos_rdp1_p14(mpcclk,mpcrst_,
+                                {pos_rdp1   ,pos_rdp1_p1},
+                                {pos_rdp1_p1,pos_rdp1_p2});
+assign          pos_rdp1 = rdp1_p1 & (~rdp1_p2);
+
+wire            pos_wrp0,pos_wrp0_p1,pos_wrp0_p2;
+fflopx #(2)     cr_pos_wrp0_p14(mpcclk,mpcrst_,
+                                {pos_wrp0   ,pos_wrp0_p1},
+                                {pos_wrp0_p1,pos_wrp0_p2});
+assign          pos_wrp0 = wrp0_p1 & (~wrp0_p2);
+
+assign          nxt_sw_eupack = pos_rdp1_p2 | pos_wrp0_p2;
+
+wire            nxt_eupack,eupack,eupack_p1;
+fflopx #(2)     cr_eupack(mpcclk,mpcrst_,{nxt_eupack,eupack},{eupack,eupack_p1});
+//assign          nxt_eupack = sw_eupack | pos_ieupack;
+wire            pos_timeout;
+wire            timeoutind,timeoutind1;
+fflopx  #(1)    itimeoutind1(mpcclk,mpcrst_,timeoutind,timeoutind1);
+
+assign          nxt_eupack = sw_eupack | pos_ieupack | pos_timeout;
+
+wire            nxt_impcta_,impcta_;
+fflopx #(1)     cr_impcta_(mpcclk,mpcrst_,nxt_impcta_,impcta_);
+assign          nxt_impcta_ = ~(eupack | eupack_p1);
+
+wire [15:0]     nxt_mpcdo;
+fflopx #(16)    cr_mpcdo(mpcclk,mpcrst_,nxt_mpcdo,mpcdo);
+//assign          nxt_mpcdo = rdp0_p1 ? ieupdo[31:16] : ieupdo_l;
+assign          nxt_mpcdo = (timeoutind ? 16'hcafe      :
+                             rdp0_p1    ? ieupdo[31:16] : ieupdo_l);
+
+ALTIOBUF_OPAD_EN        OPAD_EN_TA
+    (
+     .datain            (impcta_),
+     .oe                (~mpccs_),
+     .dataout           (mpcta_)
+     );
+
+ALTBPAD     ALTBPAD_DATA[15:0]
+    (
+     .datain            (mpcdo),
+     .oe                ({16{~(mpcoe_ | mpccs_)}}),
+     .dataio            (mpcdio),
+     .dataout           (mpcdi)
+     );
+
+wire            mpcint1_ = !ieupint1;
+wire            mpcint2_ = !ieupint2;
+
+/*----------------------------------------------------------------------------*/
+/* timer counter */
+reg [5:0]       cnttimeout;
+wire            oeupce_act;
+assign          oeupce_act  = (pos_rdp0 | pos_wrp1);
+
+assign          timeoutind  = (cnttimeout == 6'h3f);
+assign          pos_timeout = timeoutind & (~timeoutind1);
+
+wire            cnttimeval;
+assign          cnttimeval  = (cnttimeout < 6'h3f) & ~(oeupce_);
+
+always @ (posedge mpcclk or negedge mpcrst_)
+    begin
+    if (~mpcrst_)
+        begin
+        cnttimeout  <= 6'b0;
+        end
+    else if (oeupce_act)
+        begin
+        cnttimeout  <= 6'b0;
+        end
+    else if (cnttimeval)
+        begin
+        cnttimeout  <= cnttimeout + 1'b1;
+        end
+    end
+
+endmodule 
