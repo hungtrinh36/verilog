@@ -1,0 +1,183 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Arrive Technologies
+//
+// Filename     : cpup1020_training.v
+// Description  : .
+//
+// Author       : hungtp@ES-TPHUNG
+// Created On   : Tue Oct 07 08:22:51 2014
+// History (Date, Changed By)
+//
+////////////////////////////////////////////////////////////////////////////////
+
+module cpup1020_training
+    (
+     //p1020 interface
+     mpcclk,
+     mpcrst_,
+     
+     mpcadr,     
+     mpcale,
+     mpcoe_,
+     mpccs_,
+     mpcta_,
+     mpcint1_,
+     mpcint2_,
+     mpcdio,
+     mpcwe_,
+     //cpu core interface
+     oeupclk,
+     oeupce_,
+     oeupa,
+     oeupdi,
+     ieupdo,
+     oeuprnw,
+     ieupack,
+     ieupint1,
+     ieupint2     
+     );
+
+// ics_      ____________________                        _________________
+//                               |______________________|
+// ce_        ___________________                        _________________
+//                               |______________________|
+// rnw        ____________________________________________________________
+//                              _____________________
+// addr       _________________/addr                 \____________________
+//                             \_____________________/
+// ack       _______________________                  ____________________
+//                                  |________________|
+//                                                     _
+// mpc_ta    _________________________________________| |_________________ 1 CLK
+//                                   ________________
+// dat       _______________________/ data           \____________________
+//                                  \________________/
+// 
+////////////////////////////////////////////////////////////////////////////////
+// Port declarations
+//p1020 interface
+input                   mpcclk;
+input                   mpcrst_;
+
+input [DAT-1:0]         mpcadr;
+inout [DAT-1:0]         mpcdio;
+// MPC Ctrl.
+input                   mpcale;
+input                   mpcoe_;
+input                   mpccs_;
+output                  mpcta_;
+input                   mpcwe_;
+output                  mpcint1_;
+output                  mpcint2_;
+
+//cpu core interface
+output                  oeupclk;
+output                  oeupce_;
+output [23:0]           oeupa;
+output [DAT*2-1:0]      oeupdi;
+input [DAT*2-1:0]       ieupdo;
+output                  oeuprnw;
+input                   ieupack;
+input                   ieupint1;
+input                   ieupint2;
+////////////////////////////////////////////////////////////////////////////////
+// Output declarations
+
+////////////////////////////////////////////////////////////////////////////////
+// Parameter declarations
+parameter               ADDR        = 16;
+parameter               DAT         = 16;
+parameter               TIME_OUT    = 20;
+////////////////////////////////////////////////////////////////////////////////
+// Local logic and instantiation
+wire                    clk,mpcclk;
+wire                    rst_,mpcrst_;
+wire                    mpccs_,mpccs_1,pos_cs_,neg_cs_;
+
+assign                  rst_ = mpcrst_;
+assign                  clk = mpcclk;
+// detect negedge ans posedge CS_
+fflopx#(1) cr_cs_1 (clk,rst_,mpccs_,mpccs_1);
+assign                  pos_cs_ = !mpccs_1 && mpccs_;
+assign                  neg_cs_ = !mpccs_ && mpccs_1;
+// latch address
+wire [ADDR*2-1:0]       latch_addr;     // latch 16bit address and 16 bit data of CPU
+wire                    mpcale;
+wire [ADDR-1:0]         mpcadr;
+//wire [DAT-1:0]          mpcdio;
+// If LALE = {1} latch addr from 16 bit data
+wire [DAT-1:0]          hig_addr;
+wire [23:0]             oeupa;          // ATVN 24 bit address
+
+fflopxe #(ADDR) l_addr (clk,rst_,mpcale,mpcdio,hig_addr);
+
+assign                  latch_addr = {hig_addr,mpcadr}; // latch 32 bit addr
+
+wire [25:0]             oeupa1;
+
+fflopx #(ADDR*2) buff_addr (clk,rst_,latch_addr,oeupa1);
+
+wire                    rd_lsb,rd_msb,cpu_rd;
+wire                    mpcoe_;
+wire                    mpcwe_,oeuprnw;
+wire                    oeupclk;
+assign                  oeupclk = clk;
+
+assign                  oeuprnw =  ~mpcwe_ ? 1'b0 : 
+                                   ~mpcoe_ ? 1'b1 : 1'b1;
+                        
+assign                  rd_msb = (!mpcoe_ & mpcwe_) & (oeupa1[1:0] == 2'b00);
+assign                  rd_lsb = (!mpcoe_ & mpcwe_) & (oeupa1[1:0] == 2'b10);
+assign                  cpu_rd = rd_msb | rd_lsb;
+
+assign                  oeupa = (!oeupce_) ? oeupa1[25:2] : oeupa;
+//mpcta_ active hig, ack active hig
+wire                    mpc_ta_rd;
+assign                  mpc_ta_rd = (~mpccs_ & mpcwe_) ? ((~ieupack)|(!time_out)) : 1'b1; 
+wire [DAT*2-1:0]        ieupdo_i;
+wire [DAT-1:0]          mpcdio_i;
+// Latch data
+fflopxe #(DAT*2) latch_data_read (clk,rst_,ieupack,ieupdo,ieupdo_i);
+
+assign                  mpcdio_i = rd_msb ? ieupdo_i[31:16]:
+                                   rd_lsb ? ieupdo_i[15:0]: mpcdio_i;
+
+assign                  mpcdio = !mpccs_ ? mpcdio_i: 16'hz;
+// Write data
+// Condition write data
+wire                    wr_lsb,wr_msb;
+assign                  wr_msb = ~(mpccs_ | mpcwe_) & (oeupa1[1:0]==2'b00);
+assign                  wr_lsb = ~(mpccs_ | mpcwe_) & (oeupa1[1:0]==2'b10);
+// creat ack1
+wire                    ack_msb;
+wire                    ack1,ack2,ack3,ack4;
+
+fflopx #(1) cr_ack_msb (clk,rst_,neg_cs_,ack_msb);
+
+assign                  mpc_ta_wr = (~mpccs_ & wr_msb) ? (~ack_msb) : 
+                                    (~mpccs_ & wr_lsb) ? (~ieupack) : 1'b1;
+// Write 16 bit MSB
+wire [DAT*2-1:0]        wr_data;    // write 32 bit
+wire [DAT-1:0]          wr_dat_lsb,wr_dat_msb;
+
+fflopxe #(16) latch_wr_msb   (clk,rst_,wr_msb,mpcdio,wr_dat_msb);
+fflopxe #(16) latch_wr_lsb   (clk,rst_,wr_lsb,mpcdio,wr_dat_lsb);
+
+
+// core chip select
+assign                  oeupce_ = (!mpccs_ & mpcwe_) ? mpccs_1 :
+                                  (!mpccs_ & wr_lsb) ? mpccs_1 :
+                                    wr_msb ?           1'b1    :1'b1;
+// time out
+atmux1           mux_cs_rst(rst_,!oeupce_, 1'b0,cerst_);
+
+time_out request_time_out  (clk,cerst_, time_out); // counter 15 clk 
+
+wire                    mpcta_;
+assign                  mpcta_ = cpu_rd ? mpc_ta_rd : 
+                                 wr_lsb ? (~ieupack): 1'b1;
+
+
+
+endmodule 
